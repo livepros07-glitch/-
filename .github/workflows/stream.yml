@@ -14,7 +14,7 @@ FB_STREAM_KEYS:
   WATERMARK_TEXT:  
     description: 'نص العلامة المائية'  
     required: true  
-    default: 'CHAFIK GHADDAR TV'
+    default: 'CHAFIK GHADDAR T V'
 
 jobs:
 multi-broadcast:
