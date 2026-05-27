@@ -12,7 +12,7 @@ on:
         default: 'CHAFIK GHADDAR T V'
 
 jobs:
-  # المرحلة الأولى: تنظيف الداتا وتوزيعها باستعمال الفاصلة (,)
+  # المرحلة الأولى: تنظيف وتجميع الداتا فـ الـ Main Shell بلا ما تضيع
   prepare-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -22,26 +22,24 @@ jobs:
         id: set-matrix
         run: |
           JSON_RAW=""
-          # تنظيف النص من الرموز المخفية د التلفون (\r)
           CLEANED_LIST=$(echo "${{ github.event.inputs.STREAMS_LIST }}" | tr -d '\r')
           
-          # تقطيع السطر باستعمال الفاصلة (,) عوض الرمز القديم
-          echo "$CLEANED_LIST" | while IFS=',' read -r src_link fb_key; do
+          # استخدام <<< كيحافظ على المتغيرات وسط الـ Shell الرئيسي
+          while IFS=',' read -r src_link fb_key; do
             [ -z "$src_link" ] || [ -z "$fb_key" ] && continue
             
-            # حيد الفراغات الزايدة في الجناب
             SRC=$(echo "$src_link" | xargs)
             KEY=$(echo "$fb_key" | xargs)
             
             if [ ! -z "$SRC" ] && [ ! -z "$KEY" ]; then
               JSON_RAW+='{"source":"'"$SRC"'","key":"'"$KEY"'"},'
             fi
-          done
+          done <<< "$CLEANED_LIST"
           
           JSON_CLEAN="[${JSON_RAW%,}]"
           echo "matrix-jobs=${JSON_CLEAN}" >> $GITHUB_OUTPUT
 
-  # المرحلة الثانية: إطلاق البث لكل ماتش ف سيرفر مستقل (Parallel)
+  # المرحلة الثانية: إطلاق البث المتوازي فـ سيرفرات مستقلة ناضية
   broadcast:
     needs: prepare-matrix
     runs-on: ubuntu-latest
