@@ -4,45 +4,49 @@ on:
   workflow_dispatch:
     inputs:
       STREAMS_LIST:
-        description: "ضع الروابط والسوارت هنا (كل سطر فيه: الرابط|الساروت)"
+        description: "ضع الروابط والسوارت هنا (كل سطر فيه: الرابط,الساروت)"
         required: true
-        default: "link1|key1\nlink2|key2"
       WATERMARK_TEXT:
         description: 'نص العلامة المائية'
         required: true
         default: 'CHAFIK GHADDAR T V'
 
 jobs:
-  # المرحلة الأولى: كتقرأ الأسطر من الهاتف وتحولهم لـ لائحـة ذكية (JSON Matrix)
+  # المرحلة الأولى: تنظيف الداتا وتوزيعها باستعمال الفاصلة (,)
   prepare-matrix:
     runs-on: ubuntu-latest
     outputs:
-      matrix-jobs: ${{ steps: set-matrix.outputs.matrix-jobs }}
+      matrix-jobs: ${{ steps.set-matrix.outputs.matrix-jobs }}
     steps:
       - name: Generate Matrix Config
         id: set-matrix
         run: |
           JSON_RAW=""
-          echo "${{ github.event.inputs.STREAMS_LIST }}" | while IFS='|' read -r src_link fb_key; do
+          # تنظيف النص من الرموز المخفية د التلفون (\r)
+          CLEANED_LIST=$(echo "${{ github.event.inputs.STREAMS_LIST }}" | tr -d '\r')
+          
+          # تقطيع السطر باستعمال الفاصلة (,) عوض الرمز القديم
+          echo "$CLEANED_LIST" | while IFS=',' read -r src_link fb_key; do
             [ -z "$src_link" ] || [ -z "$fb_key" ] && continue
             
-            # تنظيف الفراغات الزائدة
+            # حيد الفراغات الزايدة في الجناب
             SRC=$(echo "$src_link" | xargs)
             KEY=$(echo "$fb_key" | xargs)
             
-            JSON_RAW+='{"source":"'"$SRC"'","key":"'"$KEY"'"},'
+            if [ ! -z "$SRC" ] && [ ! -z "$KEY" ]; then
+              JSON_RAW+='{"source":"'"$SRC"'","key":"'"$KEY"'"},'
+            fi
           done
           
-          # إزالة الفاصلة الأخيرة وإغلاق القوس د الـ JSON Matrix
           JSON_CLEAN="[${JSON_RAW%,}]"
           echo "matrix-jobs=${JSON_CLEAN}" >> $GITHUB_OUTPUT
 
-  # المرحلة الثانية: ك تفتح سيرفر خاص بكل سطر (كيخدموا فدقة وحدة بالمليار)
+  # المرحلة الثانية: إطلاق البث لكل ماتش ف سيرفر مستقل (Parallel)
   broadcast:
     needs: prepare-matrix
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false  # يلا طاح شي رابط ما يطفاش الآخرين، يبقاو خدامين
+      fail-fast: false
       matrix:
         stream: ${{ fromJson(needs.prepare-matrix.outputs.matrix-jobs) }}
         
@@ -56,7 +60,6 @@ jobs:
         run: |
           echo "Launching Parallel Stream for: ${{ matrix.stream.source }}"
           
-          # دابا السكريبت غيخدم بكامل الجودة الوعرة والاستقرار لي عجبك فالمعالج الخاص بيه
           ffmpeg -hide_banner -loglevel warning \
           -thread_queue_size 1024 -i "${{ matrix.stream.source }}" \
           -vf "drawtext=text='${{ github.event.inputs.WATERMARK_TEXT }}':fontcolor=white:fontsize=35:box=1:boxcolor=black@0.5:x=w-mod(t*120\,w+text_w):y=h-th-30" \
@@ -64,3 +67,4 @@ jobs:
           -pix_fmt yuv420p -g 60 \
           -c:a aac -b:a 128k -ar 44100 \
           -f flv "rtmps://live-api-s.facebook.com:443/rtmp/${{ matrix.stream.key }}"
+          
