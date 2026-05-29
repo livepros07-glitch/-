@@ -1,4 +1,4 @@
-name: 🚀 FB Multi Stream MATRIX PRO MAX (FINAL COMPATIBLE)
+name: 🚀 FB Multi Stream PRO MAX
 
 on:
   workflow_dispatch:
@@ -6,73 +6,78 @@ on:
       SOURCE_LINKS:
         description: 'روابط البث - فرق بينهم بـ ,'
         required: true
+
       FB_STREAM_KEYS:
         description: 'مفاتيح البث - فرق بينهم بـ ,'
         required: true
 
+      WATERMARK_TEXT:
+        description: 'نص العلامة المائية'
+        required: true
+        default: 'CHAFIK GHADDAR TV'
+
 jobs:
-  stream:
+  multi-broadcast:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # 4 سيرفرات كحد أقصى مسموح به بالتوازي
-        worker: [0, 1, 2, 3]
 
-    steps:  
-      - name: ⚡ Install FFmpeg  
-        run: |  
-          sudo apt-get update  
-          sudo apt-get install -y ffmpeg  
-
-      - name: 🎥 Launch Parallel Streams inside Worker ${{ matrix.worker }}  
-        run: |  
-          CLEANED_SOURCES=$(echo "${{ github.event.inputs.SOURCE_LINKS }}" | sed 's/ //g')
-          CLEANED_KEYS=$(echo "${{ github.event.inputs.FB_STREAM_KEYS }}" | sed 's/ //g')
-
-          IFS=',' read -ra SOURCES <<< "$CLEANED_SOURCES"
-          IFS=',' read -ra KEYS <<< "$CLEANED_KEYS"
-
-          if [ "${#SOURCES[@]}" -ne "${#KEYS[@]}" ]; then  
-            echo "❌ عدد الروابط وعدد المفاتيح غير متساوي!"  
-            exit 1  
-          fi  
-
-          NUM_WORKERS=4
-          WORKER_ID=${{ matrix.worker }}
-
-          for (( i=0; i<${#SOURCES[@]}; i++ ))  
+    steps:
+      - name: ⚡ Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: 🚀 Start Multi Streaming
+        shell: bash
+        run: |
+          echo "=============================="
+          echo "🚀 STARTING MULTI STREAM..."
+          echo "=============================="
+          IFS=',' read -ra SOURCES <<< "${{ github.event.inputs.SOURCE_LINKS }}"
+          IFS=',' read -ra KEYS <<< "${{ github.event.inputs.FB_STREAM_KEYS }}"
+          COUNT_SOURCES=${#SOURCES[@]}
+          COUNT_KEYS=${#KEYS[@]}
+          if [ "$COUNT_SOURCES" -ne "$COUNT_KEYS" ]; then
+            echo "❌ عدد الروابط وعدد المفاتيح غير متساوي"
+            exit 1
+          fi
+          for (( i=0; i<$COUNT_SOURCES; i++ ))
           do
-            if [ $(( i % NUM_WORKERS )) -eq $WORKER_ID ]; then
-              SRC="${SOURCES[$i]}"
-              KEY="${KEYS[$i]}"
-              IDX=$((i+1))
-
-              if [ -z "$SRC" ] || [ -z "$KEY" ]; then
-                continue
-              fi
-
-              echo "🚀 Launching Stream #$IDX on Worker $WORKER_ID..."
-
-              # التعديل السحري: نسخ الفيديو لتوفير الـ CPU + إعادة ترميز الصوت لـ aac ليرضى الفيسبوك
-              ffmpeg \
-                -hide_banner \
-                -reconnect 1 \
-                -reconnect_streamed 1 \
-                -reconnect_delay_max 10 \
-                -thread_queue_size 4096 \
-                -i "$SRC" \
-                -c:v copy \
-                -c:a aac \
-                -b:a 128k \
-                -ar 44100 \
-                -f flv \
-                "rtmps://live-api-s.facebook.com:443/rtmp/$KEY" &
-                
-              sleep 3
-            fi
+            SOURCE=$(echo "${SOURCES[$i]}" | xargs)
+            KEY=$(echo "${KEYS[$i]}" | xargs)
+            echo "▶️ Launch Stream $((i+1))"
+            ffmpeg \
+            -hide_banner \
+            -loglevel error \
+            -reconnect 1 \
+            -reconnect_streamed 1 \
+            -reconnect_delay_max 10 \
+            -thread_queue_size 4096 \
+            -i "$SOURCE" \
+            -vf "drawtext=text='${{ github.event.inputs.WATERMARK_TEXT }}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:box=1:boxcolor=black@0.4:x=w-mod(t*100\,w+tw):y=h-th-25" \
+            -map 0:v:0 \
+            -map 0:a? \
+            -c:v libx264 \
+            -preset veryfast \
+            -tune zerolatency \
+            -pix_fmt yuv420p \
+            -profile:v main \
+            -r 30 \
+            -g 60 \
+            -keyint_min 60 \
+            -sc_threshold 0 \
+            -b:v 3000k \
+            -maxrate 3000k \
+            -bufsize 6000k \
+            -c:a aac \
+            -b:a 128k \
+            -ar 44100 \
+            -f flv \
+            "rtmps://live-api-s.facebook.com:443/rtmp/$KEY" > stream_$i.log 2>&1 &
+            echo "✅ Stream $((i+1)) Started"
           done
-
-          echo "⏳ All background streams initiated. Watching..."
-          wait
-          
+          echo "=============================="
+          echo "🔥 ALL STREAMS RUNNING"
+          echo "=============================="
+          while true
+          do
+            sleep 60
+          done
