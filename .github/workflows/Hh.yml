@@ -15,82 +15,77 @@ on:
         default: 'CHAFIK GHADDAR TV'
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: 🧩 Generate Dynamic Matrix
-        id: set-matrix
-        shell: bash
-        run: |
-          IFS=',' read -ra SOURCES <<< "${{ github.event.inputs.SOURCE_LINKS }}"
-          IFS=',' read -ra KEYS <<< "${{ github.event.inputs.FB_STREAM_KEYS }}"
-          
-          if [ "${#SOURCES[@]}" -ne "${#KEYS[@]}" ]; then
-            echo "❌ عدد الروابط وعدد المفاتيح غير متساوي!"
-            exit 1
-          fi
-          
-          JSON="["
-          for (( i=0; i<${#SOURCES[@]}; i++ ))
-          do
-            SRC=$(echo "${SOURCES[$i]}" | xargs)
-            KEY=$(echo "${KEYS[$i]}" | xargs)
-            IDX=$((i+1))
-            JSON="$JSON{\"source\":\"$SRC\",\"key\":\"$KEY\",\"index\":$IDX}"
-            if [ $i -lt $(( ${#SOURCES[@]} - 1 )) ]; then
-              JSON="$JSON,"
-            fi
-          done
-          JSON="$JSON]"
-          
-          echo "matrix=$JSON" >> $GITHUB_OUTPUT
-
   stream:
-    needs: setup
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.setup.outputs.matrix) }}
-    
-    steps:
-      - name: ⚡ Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+        # هنا كنقسمو الخدمة على 4 ديال الـ Runners كحد أقصى مسموح به بالتوازي
+        worker: [0, 1, 2, 3]
 
-      - name: 🎥 Launch Dedicated Stream ${{ matrix.index }}
-        run: |
-          echo "========================================="
-          echo "🎬 STARTING STREAM RUNNER NUMBER: ${{ matrix.index }}"
-          echo "========================================="
+    steps:  
+      - name: ⚡ Install FFmpeg  
+        run: |  
+          sudo apt-get update  
+          sudo apt-get install -y ffmpeg  
+
+      - name: 🎥 Launch Parallel Streams inside Worker ${{ matrix.worker }}  
+        run: |  
+          IFS=',' read -ra SOURCES <<< "${{ github.event.inputs.SOURCE_LINKS }}"
+          IFS=',' read -ra KEYS <<< "${{ github.event.inputs.FB_STREAM_KEYS }}"
+
+          if [ "${#SOURCES[@]}" -ne "${#KEYS[@]}" ]; then  
+            echo "❌ عدد الروابط وعدد المفاتيح غير متساوي!"  
+            exit 1  
+          fi  
+
+          NUM_WORKERS=4
+          WORKER_ID=${{ matrix.worker }}
           
-          ffmpeg \
-          -hide_banner \
-          -reconnect 1 \
-          -reconnect_streamed 1 \
-          -reconnect_delay_max 10 \
-          -thread_queue_size 4096 \
-          -i "${{ matrix.source }}" \
-          -vf "drawtext=text='${{ github.event.inputs.WATERMARK_TEXT }}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:box=1:boxcolor=black@0.4:x=w-mod(t*100\,w+tw):y=h-th-25" \
-          -map 0:v:0 \
-          -map 0:a? \
-          -c:v libx264 \
-          -preset veryfast \
-          -tune zerolatency \
-          -pix_fmt yuv420p \
-          -profile:v main \
-          -r 30 \
-          -g 60 \
-          -keyint_min 60 \
-          -sc_threshold 0 \
-          -b:v 3000k \
-          -maxrate 3000k \
-          -bufsize 6000k \
-          -c:a aac \
-          -b:a 128k \
-          -ar 44100 \
-          -f flv \
-          "rtmps://live-api-s.facebook.com:443/rtmp/${{ matrix.key }}"
+          echo "========================================="  
+          echo "🎬 Worker $WORKER_ID is sorting and launching its streams..."  
+          echo "========================================="  
+
+          for (( i=0; i<${#SOURCES[@]}; i++ ))  
+          do
+            # توزيع الروابط بالتساوي على الـ 4 ديال الـ Runners
+            if [ $(( i % NUM_WORKERS )) -eq $WORKER_ID ]; then
+              SRC=$(echo "${SOURCES[$i]}" | xargs)
+              KEY=$(echo "${KEYS[$i]}" | xargs)
+              IDX=$((i+1))
+
+              echo "🚀 Starting Stream #$IDX on Worker $WORKER_ID in background..."
+
+              ffmpeg \
+                -hide_banner \
+                -reconnect 1 \
+                -reconnect_streamed 1 \
+                -reconnect_delay_max 10 \
+                -thread_queue_size 4096 \
+                -i "$SRC" \
+                -vf "drawtext=text='${{ github.event.inputs.WATERMARK_TEXT }}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:box=1:boxcolor=black@0.4:x=w-mod(t*100\,w+tw):y=h-th-25" \
+                -map 0:v:0 \
+                -map 0:a? \
+                -c:v libx264 \
+                -preset ultrafast \
+                -tune zerolatency \
+                -pix_fmt yuv420p \
+                -profile:v main \
+                -r 30 \  
+                -g 60 \  
+                -keyint_min 60 \  
+                -sc_threshold 0 \  
+                -b:v 2500k \  
+                -maxrate 2500k \  
+                -bufsize 5000k \  
+                -c:a aac \  
+                -b:a 128k \  
+                -ar 44100 \  
+                -f flv \  
+                "rtmps://live-api-s.facebook.com:443/rtmp/$KEY" &
+            fi
+          done
+
+          echo "⏳ All assigned background streams launched. Waiting for active streams to finish..."
+          # هاد الأمر ضروري باش الوركر ميسدش السيرفر حتى يسالي البث بالكامل
+          wait
