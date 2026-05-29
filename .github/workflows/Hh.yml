@@ -1,4 +1,4 @@
-name: 🚀 FB Multi Stream MATRIX PRO MAX (DIRECT BIND MODE)
+name: 🚀 FB Multi Stream MATRIX PRO MAX (FINAL COMPATIBLE)
 
 on:
   workflow_dispatch:
@@ -11,16 +11,22 @@ on:
         required: true
 
 jobs:
-  setup:
+  stream:
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: 🧩 Generate Dynamic Matrix
-        id: set-matrix
-        shell: bash
-        run: |
-          # تنظيف الفراغات
+    strategy:
+      fail-fast: false
+      matrix:
+        # 4 سيرفرات كحد أقصى مسموح به بالتوازي
+        worker: [0, 1, 2, 3]
+
+    steps:  
+      - name: ⚡ Install FFmpeg  
+        run: |  
+          sudo apt-get update  
+          sudo apt-get install -y ffmpeg  
+
+      - name: 🎥 Launch Parallel Streams inside Worker ${{ matrix.worker }}  
+        run: |  
           CLEANED_SOURCES=$(echo "${{ github.event.inputs.SOURCE_LINKS }}" | sed 's/ //g')
           CLEANED_KEYS=$(echo "${{ github.event.inputs.FB_STREAM_KEYS }}" | sed 's/ //g')
 
@@ -31,55 +37,42 @@ jobs:
             echo "❌ عدد الروابط وعدد المفاتيح غير متساوي!"  
             exit 1  
           fi  
-            
-          JSON="["  
+
+          NUM_WORKERS=4
+          WORKER_ID=${{ matrix.worker }}
+
           for (( i=0; i<${#SOURCES[@]}; i++ ))  
-          do  
-            SRC="${SOURCES[$i]}"  
-            KEY="${KEYS[$i]}"  
-            IDX=$((i+1))  
-            JSON="$JSON{\"source\":\"$SRC\",\"key\":\"$KEY\",\"index\":$IDX}"  
-            if [ $i -lt $(( ${#SOURCES[@]} - 1 )) ]; then  
-              JSON="$JSON,"  
-            fi  
-          done  
-          JSON="$JSON]"  
-            
-          echo "matrix=$JSON" >> $GITHUB_OUTPUT
+          do
+            if [ $(( i % NUM_WORKERS )) -eq $WORKER_ID ]; then
+              SRC="${SOURCES[$i]}"
+              KEY="${KEYS[$i]}"
+              IDX=$((i+1))
 
-  stream:
-    needs: setup
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      # هنا اللعبة: كنقولو لـ GitHub خدم غير 4 ديال اللايفات دقة وحدة بالتوازي (Max Parallel) 
-      # والروابط الباقية كتبقى في الصف (Queue) أوتوماتيكياً بلا ما يتبلوكا الحساب ديالك
-      max-parallel: 4
-      matrix:
-        include: ${{ fromJson(needs.setup.outputs.matrix) }}
+              if [ -z "$SRC" ] || [ -z "$KEY" ]; then
+                continue
+              fi
 
-    steps:  
-      - name: ⚡ Install FFmpeg  
-        run: |  
-          sudo apt-get update  
-          sudo apt-get install -y ffmpeg  
+              echo "🚀 Launching Stream #$IDX on Worker $WORKER_ID..."
 
-      - name: 🎥 Launch Dedicated Stream ${{ matrix.index }}  
-        run: |  
-          echo "========================================="  
-          echo "🎬 STARTING STREAM #${{ matrix.index }} (DIRECT LINK TO KEY)"  
-          echo "========================================="  
-            
-          # دابا السورس مربوط مع الكي ديالو نيشان بلا حساب بلا تخربيق
-          # واستخدمنا الـ copy Mode باش ما ياكلش الـ CPU
-          ffmpeg \
-            -hide_banner \
-            -reconnect 1 \
-            -reconnect_streamed 1 \
-            -reconnect_delay_max 10 \
-            -thread_queue_size 4096 \
-            -i "${{ matrix.source }}" \
-            -c:v copy \
-            -c:a copy \
-            -f flv \
-            "rtmps://live-api-s.facebook.com:443/rtmp/${{ matrix.key }}"
+              # التعديل السحري: نسخ الفيديو لتوفير الـ CPU + إعادة ترميز الصوت لـ aac ليرضى الفيسبوك
+              ffmpeg \
+                -hide_banner \
+                -reconnect 1 \
+                -reconnect_streamed 1 \
+                -reconnect_delay_max 10 \
+                -thread_queue_size 4096 \
+                -i "$SRC" \
+                -c:v copy \
+                -c:a aac \
+                -b:a 128k \
+                -ar 44100 \
+                -f flv \
+                "rtmps://live-api-s.facebook.com:443/rtmp/$KEY" &
+                
+              sleep 3
+            fi
+          done
+
+          echo "⏳ All background streams initiated. Watching..."
+          wait
+          
