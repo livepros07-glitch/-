@@ -20,7 +20,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # هنا كنقسمو الخدمة على 4 ديال الـ Runners كحد أقصى مسموح به بالتوازي
         worker: [0, 1, 2, 3]
 
     steps:  
@@ -31,8 +30,12 @@ jobs:
 
       - name: 🎥 Launch Parallel Streams inside Worker ${{ matrix.worker }}  
         run: |  
-          IFS=',' read -ra SOURCES <<< "${{ github.event.inputs.SOURCE_LINKS }}"
-          IFS=',' read -ra KEYS <<< "${{ github.event.inputs.FB_STREAM_KEYS }}"
+          # تعويض أي مساحات زائدة وتنظيف المدخلات
+          CLEANED_SOURCES=$(echo "${{ github.event.inputs.SOURCE_LINKS }}" | sed 's/ //g')
+          CLEANED_KEYS=$(echo "${{ github.event.inputs.FB_STREAM_KEYS }}" | sed 's/ //g')
+
+          IFS=',' read -ra SOURCES <<< "$CLEANED_SOURCES"
+          IFS=',' read -ra KEYS <<< "$CLEANED_KEYS"
 
           if [ "${#SOURCES[@]}" -ne "${#KEYS[@]}" ]; then  
             echo "❌ عدد الروابط وعدد المفاتيح غير متساوي!"  
@@ -48,13 +51,17 @@ jobs:
 
           for (( i=0; i<${#SOURCES[@]}; i++ ))  
           do
-            # توزيع الروابط بالتساوي على الـ 4 ديال الـ Runners
             if [ $(( i % NUM_WORKERS )) -eq $WORKER_ID ]; then
-              SRC=$(echo "${SOURCES[$i]}" | xargs)
-              KEY=$(echo "${KEYS[$i]}" | xargs)
+              SRC="${SOURCES[$i]}"
+              KEY="${KEYS[$i]}"
               IDX=$((i+1))
 
-              echo "🚀 Starting Stream #$IDX on Worker $WORKER_ID in background..."
+              # التأكد من أن الرابط والمفتاح ليسا فارغين
+              if [ -z "$SRC" ] || [ -z "$KEY" ]; then
+                continue
+              fi
+
+              echo "🚀 Starting Stream #$IDX on Worker $WORKER_ID..."
 
               ffmpeg \
                 -hide_banner \
@@ -71,21 +78,24 @@ jobs:
                 -tune zerolatency \
                 -pix_fmt yuv420p \
                 -profile:v main \
-                -r 30 \  
-                -g 60 \  
-                -keyint_min 60 \  
-                -sc_threshold 0 \  
-                -b:v 2500k \  
-                -maxrate 2500k \  
-                -bufsize 5000k \  
-                -c:a aac \  
-                -b:a 128k \  
-                -ar 44100 \  
-                -f flv \  
+                -r 30 \
+                -g 60 \
+                -keyint_min 60 \
+                -sc_threshold 0 \
+                -b:v 2500k \
+                -maxrate 2500k \
+                -bufsize 5000k \
+                -c:a aac \
+                -b:a 128k \
+                -ar 44100 \
+                -f flv \
                 "rtmps://live-api-s.facebook.com:443/rtmp/$KEY" &
+                
+              # مهلة قصيرة (2 ثواني) باش نخليو FFmpeg يتصل بالرابط اللول قبل ما يدوز للثاني
+              sleep 2
             fi
           done
 
           echo "⏳ All assigned background streams launched. Waiting for active streams to finish..."
-          # هاد الأمر ضروري باش الوركر ميسدش السيرفر حتى يسالي البث بالكامل
           wait
+          
