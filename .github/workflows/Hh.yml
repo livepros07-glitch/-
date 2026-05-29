@@ -1,4 +1,4 @@
-name: 🚀 FB Multi Stream MATRIX PRO MAX
+name: FB Multi Stream MATRIX PRO MAX (ULTRA COPY MODE)
 
 on:
   workflow_dispatch:
@@ -9,10 +9,6 @@ on:
       FB_STREAM_KEYS:
         description: 'مفاتيح البث - فرق بينهم بـ ,'
         required: true
-      WATERMARK_TEXT:
-        description: 'نص العلامة المائية'
-        required: true
-        default: 'CHAFIK GHADDAR TV'
 
 jobs:
   stream:
@@ -30,7 +26,7 @@ jobs:
 
       - name: 🎥 Launch Parallel Streams inside Worker ${{ matrix.worker }}  
         run: |  
-          # تعويض أي مساحات زائدة وتنظيف المدخلات
+          # تنظيف وتنقية المدخلات من الفراغات
           CLEANED_SOURCES=$(echo "${{ github.event.inputs.SOURCE_LINKS }}" | sed 's/ //g')
           CLEANED_KEYS=$(echo "${{ github.event.inputs.FB_STREAM_KEYS }}" | sed 's/ //g')
 
@@ -56,13 +52,13 @@ jobs:
               KEY="${KEYS[$i]}"
               IDX=$((i+1))
 
-              # التأكد من أن الرابط والمفتاح ليسا فارغين
               if [ -z "$SRC" ] || [ -z "$KEY" ]; then
                 continue
               fi
 
-              echo "🚀 Starting Stream #$IDX on Worker $WORKER_ID..."
+              echo "🚀 Starting Stream #$IDX on Worker $WORKER_ID in background (COPY MODE)..."
 
+              # استخدام -c:v copy و -c:a copy لتوفير جهد المعالج بالكامل وتحقيق أقصى عدد بثوث
               ffmpeg \
                 -hide_banner \
                 -reconnect 1 \
@@ -70,32 +66,14 @@ jobs:
                 -reconnect_delay_max 10 \
                 -thread_queue_size 4096 \
                 -i "$SRC" \
-                -vf "drawtext=text='${{ github.event.inputs.WATERMARK_TEXT }}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:box=1:boxcolor=black@0.4:x=w-mod(t*100\,w+tw):y=h-th-25" \
-                -map 0:v:0 \
-                -map 0:a? \
-                -c:v libx264 \
-                -preset ultrafast \
-                -tune zerolatency \
-                -pix_fmt yuv420p \
-                -profile:v main \
-                -r 30 \
-                -g 60 \
-                -keyint_min 60 \
-                -sc_threshold 0 \
-                -b:v 2500k \
-                -maxrate 2500k \
-                -bufsize 5000k \
-                -c:a aac \
-                -b:a 128k \
-                -ar 44100 \
+                -c:v copy \
+                -c:a copy \
                 -f flv \
                 "rtmps://live-api-s.facebook.com:443/rtmp/$KEY" &
                 
-              # مهلة قصيرة (2 ثواني) باش نخليو FFmpeg يتصل بالرابط اللول قبل ما يدوز للثاني
               sleep 2
             fi
           done
 
           echo "⏳ All assigned background streams launched. Waiting for active streams to finish..."
           wait
-          
